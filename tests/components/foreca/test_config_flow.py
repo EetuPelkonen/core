@@ -278,3 +278,34 @@ async def test_reauth_without_locations_uses_home(
     mock_foreca_client.current.assert_awaited_once_with(
         f"{hass.config.longitude},{hass.config.latitude}"
     )
+
+
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_reconfigure(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_foreca_client: MagicMock,
+) -> None:
+    """Test the API key can be replaced, after a check against the first location."""
+    mock_config_entry.add_to_hass(hass)
+
+    result = await mock_config_entry.start_reconfigure_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+
+    mock_foreca_client.location_info.side_effect = ForecaAuthError
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_auth"}
+    assert mock_config_entry.data == {CONF_API_KEY: "test-key"}
+
+    mock_foreca_client.location_info.side_effect = None
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert mock_config_entry.data == {CONF_API_KEY: "new-key"}
+    mock_foreca_client.current.assert_awaited_once_with("24.94,60.17")
