@@ -1,5 +1,6 @@
 """Data update coordinator for the Foreca integration."""
 
+from collections.abc import Awaitable
 from dataclasses import dataclass
 import logging
 from typing import override
@@ -11,6 +12,7 @@ from pyforeca import (
     ForecaAuthError,
     ForecaError,
     HourlyForecast,
+    Observation,
     format_location,
 )
 
@@ -21,7 +23,13 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DAILY_PERIODS, DOMAIN, HOURLY_PERIODS, UPDATE_INTERVAL
+from .const import (
+    DAILY_PERIODS,
+    DOMAIN,
+    HOURLY_PERIODS,
+    UPDATE_INTERVAL,
+    OptionalRequest,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +43,8 @@ class ForecaWeatherData:
     current: CurrentWeather
     hourly: list[HourlyForecast]
     daily: list[DailyForecast]
+    observation: Observation | None
+    failed_requests: frozenset[OptionalRequest]
 
 
 class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
@@ -67,6 +77,7 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             manufacturer="Foreca",
             entry_type=DeviceEntryType.SERVICE,
         )
+        self._failed_requests: set[OptionalRequest] = set()
 
     @override
     async def _async_update_data(self) -> ForecaWeatherData:
@@ -79,6 +90,10 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             daily = await self.client.forecast_daily(
                 self.location, periods=DAILY_PERIODS, dataset="full"
             )
+            observation = await self._async_optional(
+                OptionalRequest.OBSERVATION,
+                self.client.observation_latest(self.location),
+            )
         except ForecaAuthError as err:
             raise ConfigEntryAuthFailed(
                 f"The Foreca API rejected the API key: {err}"
@@ -88,4 +103,33 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
                 f"Error communicating with the Foreca API: {err}"
             ) from err
 
-        return ForecaWeatherData(current=current, hourly=hourly, daily=daily)
+        return ForecaWeatherData(
+            current=current,
+            hourly=hourly,
+            daily=daily,
+            observation=observation,
+            failed_requests=frozenset(self._failed_requests),
+        )
+
+    async def _async_optional[T](
+        self, request: OptionalRequest, response: Awaitable[T]
+    ) -> T | None:
+        """Return the response of a request the update can do without.
+
+        If the request fails, return None and mark it failed, so that only the
+        sensors reading it become unavailable. A rejected key still fails the
+        whole update.
+        """
+        try:
+            result = await response
+        except ForecaAuthError:
+            raise
+        except ForecaError as err:
+            if request not in self._failed_requests:
+                self._failed_requests.add(request)
+                _LOGGER.info("Error fetching %s %s data: %s", self.name, request, err)
+            return None
+        if request in self._failed_requests:
+            self._failed_requests.remove(request)
+            _LOGGER.info("Fetching %s %s data recovered", self.name, request)
+        return result
