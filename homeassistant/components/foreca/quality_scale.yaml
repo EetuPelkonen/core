@@ -80,7 +80,7 @@ rules:
     comment: The weather entity uses the device name.
   exception-translations: todo
   icon-translations: todo
-  reconfiguration-flow: todo
+  reconfiguration-flow: done
   repair-issues:
     status: exempt
     comment: The integration has no cases where raising a repair issue is needed.

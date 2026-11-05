@@ -107,11 +107,29 @@ class ForecaConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Check the new API key against the first location, then store it."""
+        """Ask for the new API key after a rejection."""
+        return await self._async_step_replace_key(
+            "reauth_confirm", self._get_reauth_entry(), user_input
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Let the user replace the API key."""
+        return await self._async_step_replace_key(
+            "reconfigure", self._get_reconfigure_entry(), user_input
+        )
+
+    async def _async_step_replace_key(
+        self,
+        step_id: str,
+        entry: ForecaConfigEntry,
+        user_input: dict[str, Any] | None,
+    ) -> ConfigFlowResult:
+        """Check a new API key against the first location, then store it."""
         errors: dict[str, str] = {}
         if user_input is not None:
             self._async_abort_entries_match({CONF_API_KEY: user_input[CONF_API_KEY]})
-            entry = self._get_reauth_entry()
             locations = entry.get_subentries_of_type(SUBENTRY_TYPE_LOCATION)
             if locations:
                 latitude = locations[0].data[CONF_LATITUDE]
@@ -134,7 +152,7 @@ class ForecaConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_update_and_abort(entry)
 
         return self.async_show_form(
-            step_id="reauth_confirm", data_schema=API_KEY_SCHEMA, errors=errors
+            step_id=step_id, data_schema=API_KEY_SCHEMA, errors=errors
         )
 
     @classmethod
