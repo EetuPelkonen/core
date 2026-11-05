@@ -198,3 +198,83 @@ async def test_duplicate_api_key_aborts(
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_reauth(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_foreca_client: MagicMock,
+) -> None:
+    """Test a new API key is checked against the first location and stored."""
+    mock_config_entry.add_to_hass(hass)
+
+    result = await mock_config_entry.start_reauth_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert mock_config_entry.data == {CONF_API_KEY: "new-key"}
+    mock_foreca_client.current.assert_awaited_once_with("24.94,60.17")
+
+
+@pytest.mark.parametrize(
+    ("exception", "error"),
+    [
+        (ForecaAuthError, "invalid_auth"),
+        (ForecaConnectionError, "cannot_connect"),
+        (RuntimeError, "unknown"),
+    ],
+)
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_reauth_errors_then_recovers(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_foreca_client: MagicMock,
+    exception: type[Exception],
+    error: str,
+) -> None:
+    """Test a rejected new key keeps the form open, then succeeds once fixed."""
+    mock_config_entry.add_to_hass(hass)
+    result = await mock_config_entry.start_reauth_flow(hass)
+
+    mock_foreca_client.location_info.side_effect = exception
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": error}
+    assert mock_config_entry.data == {CONF_API_KEY: "test-key"}
+
+    mock_foreca_client.location_info.side_effect = None
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert mock_config_entry.data == {CONF_API_KEY: "new-key"}
+
+
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_reauth_without_locations_uses_home(
+    hass: HomeAssistant, mock_foreca_client: MagicMock
+) -> None:
+    """Test an entry whose locations were all removed checks the home location."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Foreca", data={CONF_API_KEY: "test-key"}
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_API_KEY: "new-key"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    mock_foreca_client.current.assert_awaited_once_with(
+        f"{hass.config.longitude},{hass.config.latitude}"
+    )
