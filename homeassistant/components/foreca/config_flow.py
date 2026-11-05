@@ -1,5 +1,6 @@
 """Config flow for the Foreca integration."""
 
+from collections.abc import Mapping
 import logging
 from typing import Any, override
 
@@ -33,6 +34,8 @@ from .const import DOMAIN, SUBENTRY_TYPE_LOCATION
 from .coordinator import ForecaConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+API_KEY_SCHEMA = probatio.Schema({probatio.Required(CONF_API_KEY): str})
 
 
 async def _async_check_location(
@@ -92,9 +95,46 @@ class ForecaConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
 
         return self.async_show_form(
-            step_id="user",
-            data_schema=probatio.Schema({probatio.Required(CONF_API_KEY): str}),
-            errors=errors,
+            step_id="user", data_schema=API_KEY_SCHEMA, errors=errors
+        )
+
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Ask for a new API key once the current one is rejected."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Check the new API key against the first location, then store it."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            self._async_abort_entries_match({CONF_API_KEY: user_input[CONF_API_KEY]})
+            entry = self._get_reauth_entry()
+            locations = entry.get_subentries_of_type(SUBENTRY_TYPE_LOCATION)
+            if locations:
+                latitude = locations[0].data[CONF_LATITUDE]
+                longitude = locations[0].data[CONF_LONGITUDE]
+            else:
+                latitude = self.hass.config.latitude
+                longitude = self.hass.config.longitude
+            errors, _ = await _async_check_location(
+                self.hass, user_input[CONF_API_KEY], latitude, longitude
+            )
+            if not errors:
+                if (
+                    not self.hass.config_entries.async_update_entry(
+                        entry,
+                        data={**entry.data, CONF_API_KEY: user_input[CONF_API_KEY]},
+                    )
+                    or not entry.update_listeners
+                ):
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                return self.async_update_and_abort(entry)
+
+        return self.async_show_form(
+            step_id="reauth_confirm", data_schema=API_KEY_SCHEMA, errors=errors
         )
 
     @classmethod
