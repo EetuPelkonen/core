@@ -1,8 +1,8 @@
 """Weather platform for the Foreca integration."""
 
-from typing import override
+from typing import cast, override
 
-from pyforeca import DailyForecast, ForecaError, HourlyForecast
+from pyforeca import DailyForecast, FifteenMinuteForecast, ForecaError, HourlyForecast
 
 from homeassistant.components.weather import (
     ATTR_WEATHER_PRECIPITATION_UNIT,
@@ -34,6 +34,7 @@ PARALLEL_UPDATES = 0
 
 _CONFIDENCE = {"g": "good", "y": "normal", "o": "low"}
 _ROUNDING_PRECISION = 2
+_FIFTEEN_MINUTE_PERIODS = 12
 
 
 async def async_setup_entry(
@@ -93,6 +94,27 @@ def _hourly_to_forecast(hour: HourlyForecast) -> Forecast | None:
         native_pressure=hour.pressure,
         native_dew_point=hour.dew_point,
         uv_index=hour.uv_index,
+    )
+
+
+def _fifteen_minute_to_forecast(step: FifteenMinuteForecast) -> Forecast | None:
+    """Convert a Foreca 15-minute forecast to a Home Assistant forecast."""
+    if (timestamp := dt_util.parse_datetime(step.time or "")) is None:
+        return None
+    return Forecast(
+        datetime=timestamp.isoformat(),
+        condition=symbol_to_condition(step.symbol),
+        native_temperature=step.temperature,
+        native_apparent_temperature=step.feels_like_temp,
+        native_dew_point=step.dew_point,
+        humidity=step.rel_humidity,
+        native_pressure=step.pressure,
+        native_wind_speed=step.wind_speed,
+        native_wind_gust_speed=step.wind_gust,
+        wind_bearing=step.wind_dir,
+        precipitation_probability=step.precip_prob,
+        cloud_coverage=step.cloudiness,
+        uv_index=step.uv_index,
     )
 
 
@@ -293,6 +315,41 @@ class ForecaWeather(
             ),
             _ROUNDING_PRECISION,
         )
+
+    async def async_get_15_minute_forecast(self) -> ServiceResponse:
+        """Return the forecast in 15-minute steps for the next three hours."""
+        try:
+            steps = await self.coordinator.client.forecast_15minutely(
+                self.coordinator.location,
+                periods=_FIFTEEN_MINUTE_PERIODS,
+                dataset="full",
+                rounding=0,
+            )
+        except ForecaError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="fifteen_minute_forecast_error",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        dated = [
+            (step, forecast)
+            for step in steps
+            if (forecast := _fifteen_minute_to_forecast(step)) is not None
+        ]
+        converted = self._convert_forecast([forecast for _, forecast in dated])
+        return {
+            "forecast": [
+                {
+                    **cast(dict[str, JsonValueType], entry),
+                    "precipitation_rate": self._convert_precipitation(step.precip_rate),
+                    "snow_rate": self._snow(step.snow_rate),
+                    "precipitation_type": step.precip_type,
+                    "thunderstorm_probability": step.thunder_prob,
+                    "visibility": self._visibility(step.visibility),
+                }
+                for (step, _), entry in zip(dated, converted, strict=True)
+            ]
+        }
 
     async def async_get_minute_forecast(self) -> ServiceResponse:
         """Return the precipitation rate for each minute of the next hour."""

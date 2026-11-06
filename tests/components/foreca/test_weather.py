@@ -3,13 +3,20 @@
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-from pyforeca import DailyForecast, ForecaError, HourlyForecast, MinutelyForecast
+from pyforeca import (
+    DailyForecast,
+    FifteenMinuteForecast,
+    ForecaError,
+    HourlyForecast,
+    MinutelyForecast,
+)
 import pytest
 from pytest_homeassistant.common import MockConfigEntry, snapshot_platform
 from syrupy.assertion import SnapshotAssertion
 
 from homeassistant.components.foreca.const import DOMAIN
 from homeassistant.components.foreca.services import (
+    SERVICE_GET_15_MINUTE_FORECAST,
     SERVICE_GET_FORECASTS_EXTRA,
     SERVICE_GET_MINUTE_FORECAST,
 )
@@ -238,22 +245,93 @@ async def test_minute_forecast_without_a_time_is_dropped(
     assert response == {ENTITY_ID: {"forecast": []}}
 
 
-async def test_minute_forecast_error(
+@pytest.mark.parametrize(
+    ("service", "mocked_method", "translation_key"),
+    [
+        pytest.param(
+            SERVICE_GET_MINUTE_FORECAST,
+            "forecast_minutely",
+            "minute_forecast_error",
+            id="minute",
+        ),
+        pytest.param(
+            SERVICE_GET_15_MINUTE_FORECAST,
+            "forecast_15minutely",
+            "fifteen_minute_forecast_error",
+            id="15_minute",
+        ),
+    ],
+)
+async def test_live_forecast_error(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_foreca_client: MagicMock,
+    service: str,
+    mocked_method: str,
+    translation_key: str,
 ) -> None:
-    """Test a failed minute forecast request raises a translated error."""
-    mock_foreca_client.forecast_minutely.side_effect = ForecaError("timeout")
+    """Test a failed forecast request raises a translated error."""
+    getattr(mock_foreca_client, mocked_method).side_effect = ForecaError("timeout")
     with patch("homeassistant.components.foreca.PLATFORMS", [Platform.WEATHER]):
         await init_integration(hass, mock_config_entry)
 
     with pytest.raises(HomeAssistantError) as exc_info:
         await hass.services.async_call(
             DOMAIN,
-            SERVICE_GET_MINUTE_FORECAST,
+            service,
             {ATTR_ENTITY_ID: ENTITY_ID},
             blocking=True,
             return_response=True,
         )
-    assert exc_info.value.translation_key == "minute_forecast_error"
+    assert exc_info.value.translation_key == translation_key
+
+
+@pytest.mark.usefixtures("mock_foreca_client")
+@pytest.mark.parametrize(
+    "unit_system",
+    [
+        pytest.param(METRIC_SYSTEM, id="metric"),
+        pytest.param(US_CUSTOMARY_SYSTEM, id="us_customary"),
+    ],
+)
+async def test_15_minute_forecast(
+    hass: HomeAssistant,
+    snapshot: SnapshotAssertion,
+    mock_config_entry: MockConfigEntry,
+    unit_system: UnitSystem,
+) -> None:
+    """Test the 15-minute forecast is returned in the entity's units."""
+    hass.config.units = unit_system
+    with patch("homeassistant.components.foreca.PLATFORMS", [Platform.WEATHER]):
+        await init_integration(hass, mock_config_entry)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_GET_15_MINUTE_FORECAST,
+        {ATTR_ENTITY_ID: ENTITY_ID},
+        blocking=True,
+        return_response=True,
+    )
+    assert response == snapshot
+
+
+async def test_15_minute_forecast_without_a_time_is_dropped(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_foreca_client: MagicMock,
+) -> None:
+    """Test that a 15-minute step without a time is left out."""
+    mock_foreca_client.forecast_15minutely.return_value = [
+        FifteenMinuteForecast(time=None, temperature=3.0)
+    ]
+    with patch("homeassistant.components.foreca.PLATFORMS", [Platform.WEATHER]):
+        await init_integration(hass, mock_config_entry)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_GET_15_MINUTE_FORECAST,
+        {ATTR_ENTITY_ID: ENTITY_ID},
+        blocking=True,
+        return_response=True,
+    )
+    assert response == {ENTITY_ID: {"forecast": []}}
