@@ -1,6 +1,7 @@
 """Test the Foreca config flow."""
 
-from unittest.mock import AsyncMock, MagicMock
+from dataclasses import replace
+from unittest.mock import MagicMock
 
 from pyforeca import ForecaAuthError, ForecaConnectionError
 import pytest
@@ -162,8 +163,8 @@ async def test_entry_title_falls_back_without_location_name(
 ) -> None:
     """Test the subentry title falls back when the API returns no name."""
     mock_config_entry.add_to_hass(hass)
-    mock_foreca_client.location_info = AsyncMock(
-        return_value=type("L", (), {"name": None})()
+    mock_foreca_client.location_info.return_value = replace(
+        mock_foreca_client.location_info.return_value, name=None
     )
 
     result = await hass.config_entries.subentries.async_init(

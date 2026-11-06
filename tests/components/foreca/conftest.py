@@ -1,90 +1,16 @@
 """Common fixtures for the Foreca tests."""
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyforeca import CurrentWeather, DailyForecast, HourlyForecast, Location
 import pytest
-from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry, async_load_json_object_fixture
 
 from homeassistant.components.foreca.const import DOMAIN, SUBENTRY_TYPE_LOCATION
 from homeassistant.config_entries import ConfigSubentryData
 from homeassistant.const import CONF_API_KEY, CONF_LATITUDE, CONF_LONGITUDE
-
-CURRENT = CurrentWeather(
-    time="2026-09-01T17:00+03:00",
-    symbol="d200",
-    symbol_phrase="partly cloudy",
-    temperature=17.4,
-    feels_like_temp=16.9,
-    rel_humidity=62,
-    dew_point=10.1,
-    wind_speed=4.2,
-    wind_dir=210,
-    wind_gust=8.0,
-    precip_prob=5,
-    precip_rate=0.0,
-    thunder_prob=8,
-    cloudiness=40,
-    uv_index=2,
-    pressure=1013.2,
-    visibility=20000,
-)
-
-HOURLY = [
-    HourlyForecast(
-        time="2026-09-01T18:00+03:00",
-        symbol="d300",
-        temperature=16.0,
-        feels_like_temp=15.2,
-        wind_speed=3.9,
-        wind_gust=7.1,
-        wind_dir=200,
-        precip_prob=10,
-        precip_accum=0.0,
-        rel_humidity=70,
-        cloudiness=60,
-        uv_index=1,
-        precip_type="rain",
-        solar_radiation=141.0,
-        snow_depth=0.0,
-    )
-]
-
-DAILY = [
-    DailyForecast(
-        date="2026-09-02",
-        symbol="d310",
-        max_temp=18.0,
-        min_temp=9.0,
-        precip_accum=1.2,
-        precip_prob=40,
-        max_wind_speed=6.0,
-        max_wind_gust=11.0,
-        wind_dir=225,
-        uv_index=3,
-        sunhours=6.4,
-        confidence="g",
-    ),
-    DailyForecast(
-        date="2026-09-03",
-        symbol="d212",
-        max_temp=12.0,
-        min_temp=4.0,
-        precip_accum=0.4,
-        max_wind_speed=5.0,
-        wind_dir=180,
-    ),
-]
-
-LOCATION = Location(
-    id=100658225,
-    name="Helsinki",
-    country="Finland",
-    timezone="Europe/Helsinki",
-    lon=24.94,
-    lat=60.17,
-)
+from homeassistant.core import HomeAssistant
 
 
 @pytest.fixture
@@ -97,8 +23,12 @@ def mock_setup_entry() -> Generator[AsyncMock]:
 
 
 @pytest.fixture
-def mock_foreca_client() -> Generator[MagicMock]:
-    """Mock the Foreca API client."""
+async def mock_foreca_client(hass: HomeAssistant) -> AsyncGenerator[MagicMock]:
+    """Mock the Foreca API client with responses recorded from the live API."""
+    location = await async_load_json_object_fixture(hass, "location.json", DOMAIN)
+    current = await async_load_json_object_fixture(hass, "current.json", DOMAIN)
+    hourly = await async_load_json_object_fixture(hass, "forecast_hourly.json", DOMAIN)
+    daily = await async_load_json_object_fixture(hass, "forecast_daily.json", DOMAIN)
     with (
         patch(
             "homeassistant.components.foreca.ForecaApiClient",
@@ -110,10 +40,16 @@ def mock_foreca_client() -> Generator[MagicMock]:
         ),
     ):
         client = client_cls.return_value
-        client.location_info = AsyncMock(return_value=LOCATION)
-        client.current = AsyncMock(return_value=CURRENT)
-        client.forecast_hourly = AsyncMock(return_value=HOURLY)
-        client.forecast_daily = AsyncMock(return_value=DAILY)
+        client.location_info = AsyncMock(return_value=Location.from_api(location))
+        client.current = AsyncMock(
+            return_value=CurrentWeather.from_api(current["current"])
+        )
+        client.forecast_hourly = AsyncMock(
+            return_value=[HourlyForecast.from_api(item) for item in hourly["forecast"]]
+        )
+        client.forecast_daily = AsyncMock(
+            return_value=[DailyForecast.from_api(item) for item in daily["forecast"]]
+        )
         yield client
 
 

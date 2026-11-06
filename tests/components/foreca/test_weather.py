@@ -1,9 +1,9 @@
 """Test the Foreca weather platform."""
 
+from dataclasses import replace
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-from pyforeca import DailyForecast, HourlyForecast
 import pytest
 from pytest_homeassistant.common import MockConfigEntry, snapshot_platform
 from syrupy.assertion import SnapshotAssertion
@@ -60,8 +60,8 @@ async def test_forecast(
 @pytest.mark.parametrize(
     ("forecast_type", "mocked_method", "undated"),
     [
-        ("daily", "forecast_daily", [DailyForecast(date=None)]),
-        ("hourly", "forecast_hourly", [HourlyForecast(time=None)]),
+        ("daily", "forecast_daily", {"date": None}),
+        ("hourly", "forecast_hourly", {"time": None}),
     ],
 )
 async def test_forecast_without_a_time_is_dropped(
@@ -70,10 +70,11 @@ async def test_forecast_without_a_time_is_dropped(
     mock_foreca_client: MagicMock,
     forecast_type: str,
     mocked_method: str,
-    undated: list[DailyForecast] | list[HourlyForecast],
+    undated: dict[str, None],
 ) -> None:
     """Test that a forecast entry without a date or time is left out."""
-    getattr(mock_foreca_client, mocked_method).return_value = undated
+    mocked = getattr(mock_foreca_client, mocked_method)
+    mocked.return_value = [replace(mocked.return_value[0], **undated)]
     with patch("homeassistant.components.foreca.PLATFORMS", [Platform.WEATHER]):
         await init_integration(hass, mock_config_entry)
 
@@ -112,4 +113,4 @@ async def test_daily_forecast_lands_on_the_right_local_day(
     assert timestamp is not None
     # The date has to survive being rendered where Home Assistant is, which is
     # what midnight UTC would break.
-    assert dt_util.as_local(timestamp).date() == date(2026, 9, 2)
+    assert dt_util.as_local(timestamp).date() == date(2026, 11, 6)
