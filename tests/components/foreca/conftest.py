@@ -10,6 +10,7 @@ from pyforeca import (
     DailyForecast,
     HourlyForecast,
     Location,
+    MinutelyForecast,
     Observation,
 )
 import pytest
@@ -102,6 +103,13 @@ DAILY = [
     ),
 ]
 
+MINUTELY = [
+    MinutelyForecast(time="2026-09-01T17:01+03:00", precip_rate=0.0),
+    MinutelyForecast(time="2026-09-01T17:02+03:00", precip_rate=0.4),
+    MinutelyForecast(time="2026-09-01T17:03+03:00", precip_rate=1.27),
+    MinutelyForecast(time="2026-09-01T17:04+03:00", precip_rate=None),
+]
+
 LOCATION = Location(
     id=100658225,
     name="Helsinki",
@@ -182,6 +190,7 @@ def mock_foreca_client(
             ),
         )
         client.air_quality_hourly = AsyncMock(return_value=[AIR_QUALITY])
+        client.forecast_minutely = AsyncMock(return_value=MINUTELY)
         yield client
 
 
