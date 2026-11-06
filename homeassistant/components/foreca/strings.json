@@ -47,6 +47,9 @@
     }
   },
   "exceptions": {
+    "fifteen_minute_forecast_error": {
+      "message": "Error fetching the 15-minute forecast: {error}"
+    },
     "minute_forecast_error": {
       "message": "Error fetching the minute forecast: {error}"
     }
@@ -60,6 +63,10 @@
     }
   },
   "services": {
+    "get_15_minute_forecast": {
+      "description": "Retrieves the forecast in 15-minute steps for the next three hours, in the weather entity's units. Every call makes a request to the Foreca Weather API and counts toward the daily limit of your plan.",
+      "name": "Get 15-minute forecast"
+    },
     "get_forecasts_extra": {
       "description": "Retrieves the forecast values that weather.get_forecasts has no place for, such as precipitation type, snow, solar radiation, sunshine and sunrise. They come from the forecast already fetched, so the action makes no API requests.",
       "fields": {
