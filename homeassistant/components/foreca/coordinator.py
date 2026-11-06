@@ -91,12 +91,16 @@ class ForecaUpdateCoordinator(ForecaCoordinator[ForecaWeatherData]):
     async def _async_update_data(self) -> ForecaWeatherData:
         """Fetch data from the Foreca API."""
         try:
-            current = await self.client.current(self.location)
+            current = await self.client.current(self.location, rounding=0)
             hourly = await self.client.forecast_hourly(
-                self.location, periods=HOURLY_PERIODS, dataset="full"
+                self.location, periods=HOURLY_PERIODS, dataset="full", rounding=0
             )
             daily = await self.client.forecast_daily(
-                self.location, periods=DAILY_PERIODS, dataset="full", ensemble=True
+                self.location,
+                periods=DAILY_PERIODS,
+                dataset="full",
+                ensemble=True,
+                rounding=0,
             )
         except (ForecaAuthError, ForecaProductUnavailableError) as err:
             raise ConfigEntryAuthFailed(
