@@ -93,6 +93,19 @@ async def test_documented_request_budget(
     assert sum(awaited.values()) == 6
 
 
+async def test_requests_ask_for_unrounded_values(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_foreca_client: MagicMock,
+) -> None:
+    """Test every request asks for values with their decimals."""
+    await init_integration(hass, mock_config_entry)
+
+    assert mock_foreca_client.current.await_args.kwargs["rounding"] == 0
+    assert mock_foreca_client.forecast_hourly.await_args.kwargs["rounding"] == 0
+    assert mock_foreca_client.forecast_daily.await_args.kwargs["rounding"] == 0
+
+
 @pytest.mark.usefixtures("mock_foreca_client")
 async def test_added_location_gets_an_entity(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
