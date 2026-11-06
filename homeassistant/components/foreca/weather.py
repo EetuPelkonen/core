@@ -2,7 +2,7 @@
 
 from typing import override
 
-from pyforeca import DailyForecast, HourlyForecast
+from pyforeca import DailyForecast, ForecaError, HourlyForecast
 
 from homeassistant.components.weather import (
     ATTR_WEATHER_PRECIPITATION_UNIT,
@@ -21,11 +21,12 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, ServiceResponse, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 from homeassistant.util.json import JsonValueType
 
-from .const import symbol_to_condition
+from .const import DOMAIN, symbol_to_condition
 from .coordinator import ForecaConfigEntry, ForecaUpdateCoordinator
 from .entity import ForecaEntity
 
@@ -289,6 +290,38 @@ class ForecaWeather(
                 value, UnitOfPrecipitationDepth.CENTIMETERS, self._precipitation_unit
             ),
             _ROUNDING_PRECISION,
+        )
+
+    async def async_get_minute_forecast(self) -> ServiceResponse:
+        """Return the precipitation rate for each minute of the next hour."""
+        try:
+            minutes = await self.coordinator.client.forecast_minutely(
+                self.coordinator.location
+            )
+        except ForecaError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="minute_forecast_error",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        return {
+            "resolution": minutes.resolution,
+            "forecast": [
+                {
+                    "datetime": timestamp.isoformat(),
+                    "precipitation": self._convert_precipitation(minute.precip_rate),
+                }
+                for minute in minutes
+                if (timestamp := dt_util.parse_datetime(minute.time or "")) is not None
+            ],
+        }
+
+    def _convert_precipitation(self, rate: float | None) -> float | None:
+        """Convert a rate in mm/h to the entity's precipitation unit per hour."""
+        if rate is None:
+            return None
+        return UNIT_CONVERSIONS[ATTR_WEATHER_PRECIPITATION_UNIT](
+            rate, UnitOfPrecipitationDepth.MILLIMETERS, self._precipitation_unit
         )
 
 
