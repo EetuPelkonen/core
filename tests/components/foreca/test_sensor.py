@@ -4,7 +4,13 @@ import logging
 from unittest.mock import MagicMock, patch
 
 from freezegun.api import FrozenDateTimeFactory
-from pyforeca import CurrentWeather, ForecaConnectionError, Observation
+from pyforeca import (
+    AirQualityForecast,
+    CurrentWeather,
+    ForecaConnectionError,
+    ForecaProductUnavailableError,
+    Observation,
+)
 import pytest
 from pytest_homeassistant.common import (
     MockConfigEntry,
@@ -14,6 +20,7 @@ from pytest_homeassistant.common import (
 from syrupy.assertion import SnapshotAssertion
 
 from homeassistant.components.foreca.const import UPDATE_INTERVAL, symbol_to_condition
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
     ATTR_UNIT_OF_MEASUREMENT,
     STATE_UNAVAILABLE,
@@ -27,8 +34,8 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
 from . import init_integration
 
+AIR_QUALITY_INDEX = "sensor.helsinki_air_quality_index"
 OBSERVED_TEMPERATURE = "sensor.helsinki_observed_temperature"
-PRECIPITATION_PROBABILITY = "sensor.helsinki_precipitation_probability"
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default", "mock_foreca_client")
@@ -62,6 +69,12 @@ async def test_sensors_disabled_by_default(
         if entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION
     }
     assert disabled == {
+        "sensor.helsinki_carbon_monoxide_index",
+        "sensor.helsinki_nitrogen_dioxide_index",
+        "sensor.helsinki_ozone_index",
+        "sensor.helsinki_pm10_index",
+        "sensor.helsinki_pm2_5_index",
+        "sensor.helsinki_sulphur_dioxide_index",
         "sensor.helsinki_observation_time",
         "sensor.helsinki_observed_apparent_temperature",
         "sensor.helsinki_observed_condition",
@@ -76,10 +89,10 @@ async def test_sensors_disabled_by_default(
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
 @pytest.mark.parametrize(
-    "observation",
+    ("observation", "air_quality"),
     [
-        pytest.param(None, id="no_station_nearby"),
-        pytest.param(Observation(), id="empty_observation"),
+        pytest.param(None, [], id="no_station_or_air_quality_nearby"),
+        pytest.param(Observation(), [AirQualityForecast()], id="empty_values"),
     ],
 )
 async def test_sensors_without_values(
@@ -87,15 +100,17 @@ async def test_sensors_without_values(
     mock_config_entry: MockConfigEntry,
     mock_foreca_client: MagicMock,
     observation: Observation | None,
+    air_quality: list[AirQualityForecast],
 ) -> None:
     """Test sensors are unknown when the API leaves their value out."""
     mock_foreca_client.current.return_value = CurrentWeather()
     mock_foreca_client.observation_latest.return_value = observation
+    mock_foreca_client.air_quality_hourly.return_value = air_quality
     with patch("homeassistant.components.foreca.PLATFORMS", [Platform.SENSOR]):
         await init_integration(hass, mock_config_entry)
 
     states = hass.states.async_all(Platform.SENSOR)
-    assert len(states) == 15
+    assert len(states) == 23
     assert {state.state for state in states} == {STATE_UNKNOWN}
 
 
@@ -138,44 +153,121 @@ async def test_observed_visibility_in_miles(
     assert float(state.state) == pytest.approx(12.43, abs=0.01)
 
 
-async def test_failed_observation_leaves_other_entities_available(
+def _unavailable(hass: HomeAssistant) -> set[str]:
+    """Return the entities that are unavailable."""
+    return {
+        state.entity_id
+        for state in hass.states.async_all()
+        if state.state == STATE_UNAVAILABLE
+    }
+
+
+@pytest.mark.parametrize(
+    ("method", "request_name", "unavailable"),
+    [
+        pytest.param(
+            "observation_latest",
+            "observation",
+            {
+                "sensor.helsinki_observation_station",
+                "sensor.helsinki_observed_humidity",
+                OBSERVED_TEMPERATURE,
+            },
+            id="observation",
+        ),
+        pytest.param(
+            "air_quality_hourly",
+            "air quality",
+            {AIR_QUALITY_INDEX, "sensor.helsinki_dominant_pollutant"},
+            id="air_quality",
+        ),
+    ],
+)
+async def test_failed_request_leaves_other_entities_available(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_foreca_client: MagicMock,
     freezer: FrozenDateTimeFactory,
     caplog: pytest.LogCaptureFixture,
+    method: str,
+    request_name: str,
+    unavailable: set[str],
 ) -> None:
-    """Test a failing observation request makes only its sensors unavailable.
+    """Test a failing station or air quality request makes only its sensors unavailable.
 
     The failure and the recovery are each logged once, however many updates
     the failure lasts.
     """
     caplog.set_level(logging.INFO, logger="homeassistant.components.foreca")
-    mock_foreca_client.observation_latest.side_effect = ForecaConnectionError("Timeout")
+    getattr(mock_foreca_client, method).side_effect = ForecaConnectionError("Timeout")
     await init_integration(hass, mock_config_entry)
 
-    assert hass.states.get(OBSERVED_TEMPERATURE).state == STATE_UNAVAILABLE
-    assert hass.states.get(PRECIPITATION_PROBABILITY).state == "5"
-    assert hass.states.get("weather.helsinki").state == "partlycloudy"
+    assert _unavailable(hass) == unavailable
 
     freezer.tick(UPDATE_INTERVAL)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    assert hass.states.get(OBSERVED_TEMPERATURE).state == STATE_UNAVAILABLE
+    assert _unavailable(hass) == unavailable
 
-    mock_foreca_client.observation_latest.side_effect = None
+    getattr(mock_foreca_client, method).side_effect = None
     freezer.tick(UPDATE_INTERVAL)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
 
-    assert hass.states.get(OBSERVED_TEMPERATURE).state == "8"
-    assert mock_foreca_client.observation_latest.await_count == 3
+    assert _unavailable(hass) == set()
+    assert getattr(mock_foreca_client, method).await_count == 3
     assert [
         (record.levelno, record.getMessage())
         for record in caplog.records
         if record.name == "homeassistant.components.foreca.coordinator"
         and record.levelno >= logging.INFO
     ] == [
-        (logging.INFO, "Error fetching foreca Helsinki observation data: Timeout"),
-        (logging.INFO, "Fetching foreca Helsinki observation data recovered"),
+        (logging.INFO, f"Error fetching foreca Helsinki {request_name} data: Timeout"),
+        (logging.INFO, f"Fetching foreca Helsinki {request_name} data recovered"),
     ]
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_air_quality_not_on_plan(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_foreca_client: MagicMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test a plan without air quality gets no air quality sensors or requests.
+
+    The key and the other sensors keep working, and the request that found
+    air quality missing from the plan is not repeated.
+    """
+    mock_foreca_client.air_quality_hourly.side_effect = ForecaProductUnavailableError
+    with patch("homeassistant.components.foreca.PLATFORMS", [Platform.SENSOR]):
+        await init_integration(hass, mock_config_entry)
+
+    assert mock_config_entry.state is ConfigEntryState.LOADED
+    assert not hass.config_entries.flow.async_progress()
+    assert hass.states.get(AIR_QUALITY_INDEX) is None
+    assert len(hass.states.async_all(Platform.SENSOR)) == 15
+    assert hass.states.get(OBSERVED_TEMPERATURE).state == "8"
+
+    freezer.tick(UPDATE_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert mock_foreca_client.current.await_count == 2
+    assert mock_foreca_client.air_quality_hourly.await_count == 1
+
+
+async def test_unknown_pollutant(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_foreca_client: MagicMock,
+) -> None:
+    """Test a pollutant name outside the documented set reads as unknown."""
+    mock_foreca_client.air_quality_hourly.return_value = [
+        AirQualityForecast(pollutant="Pollen", aqi=12)
+    ]
+    with patch("homeassistant.components.foreca.PLATFORMS", [Platform.SENSOR]):
+        await init_integration(hass, mock_config_entry)
+
+    assert hass.states.get("sensor.helsinki_dominant_pollutant").state == STATE_UNKNOWN
+    assert hass.states.get(AIR_QUALITY_INDEX).state == "12"

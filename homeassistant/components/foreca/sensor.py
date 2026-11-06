@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import override
 
-from pyforeca import Observation
+from pyforeca import AirQualityForecast, Observation
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -46,6 +46,15 @@ from .entity import ForecaEntity
 
 PARALLEL_UPDATES = 0
 
+POLLUTANTS = {
+    "Carbon monoxide": "carbon_monoxide",
+    "Nitrogen dioxide": "nitrogen_dioxide",
+    "Ozone": "ozone",
+    "Particulate matter <10um": "pm10",
+    "Particulate matter <2.5um": "pm25",
+    "Sulphur dioxide": "sulphur_dioxide",
+}
+
 
 @dataclass(frozen=True, kw_only=True)
 class ForecaSensorEntityDescription(SensorEntityDescription):
@@ -80,6 +89,26 @@ def _observed(
         return value_fn(data.observation)
 
     return read
+
+
+def _air_quality(
+    value_fn: Callable[[AirQualityForecast], StateType],
+) -> Callable[[ForecaWeatherData], StateType]:
+    """Read a value from the air quality of the hour in progress."""
+
+    def read(data: ForecaWeatherData) -> StateType:
+        if data.air_quality is None:
+            return None
+        return value_fn(data.air_quality)
+
+    return read
+
+
+def _pollutant(air_quality: AirQualityForecast) -> str | None:
+    """Return the dominant pollutant as an option key."""
+    if air_quality.pollutant is None:
+        return None
+    return POLLUTANTS.get(air_quality.pollutant)
 
 
 SENSOR_TYPES: tuple[ForecaSensorEntityDescription, ...] = (
@@ -233,6 +262,72 @@ SENSOR_TYPES: tuple[ForecaSensorEntityDescription, ...] = (
     ),
 )
 
+AIR_QUALITY_SENSOR_TYPES: tuple[ForecaSensorEntityDescription, ...] = (
+    ForecaSensorEntityDescription(
+        key="aqi",
+        device_class=SensorDeviceClass.AQI,
+        state_class=SensorStateClass.MEASUREMENT,
+        request=OptionalRequest.AIR_QUALITY,
+        value_fn=_air_quality(lambda aq: aq.aqi),
+    ),
+    ForecaSensorEntityDescription(
+        key="dominant_pollutant",
+        translation_key="dominant_pollutant",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(POLLUTANTS.values()),
+        request=OptionalRequest.AIR_QUALITY,
+        value_fn=_air_quality(_pollutant),
+    ),
+    ForecaSensorEntityDescription(
+        key="aqi_co",
+        translation_key="aqi_co",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.AIR_QUALITY,
+        value_fn=_air_quality(lambda aq: aq.aqi_co),
+    ),
+    ForecaSensorEntityDescription(
+        key="aqi_no2",
+        translation_key="aqi_no2",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.AIR_QUALITY,
+        value_fn=_air_quality(lambda aq: aq.aqi_no2),
+    ),
+    ForecaSensorEntityDescription(
+        key="aqi_o3",
+        translation_key="aqi_o3",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.AIR_QUALITY,
+        value_fn=_air_quality(lambda aq: aq.aqi_o3),
+    ),
+    ForecaSensorEntityDescription(
+        key="aqi_so2",
+        translation_key="aqi_so2",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.AIR_QUALITY,
+        value_fn=_air_quality(lambda aq: aq.aqi_so2),
+    ),
+    ForecaSensorEntityDescription(
+        key="aqi_pm10",
+        translation_key="aqi_pm10",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.AIR_QUALITY,
+        value_fn=_air_quality(lambda aq: aq.aqi_pm10),
+    ),
+    ForecaSensorEntityDescription(
+        key="aqi_pm25",
+        translation_key="aqi_pm25",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.AIR_QUALITY,
+        value_fn=_air_quality(lambda aq: aq.aqi_pm2p5),
+    ),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -241,10 +336,13 @@ async def async_setup_entry(
 ) -> None:
     """Add Foreca sensors for every configured location."""
     for subentry_id, coordinator in entry.runtime_data.items():
+        descriptions = SENSOR_TYPES
+        if coordinator.air_quality_on_plan:
+            descriptions += AIR_QUALITY_SENSOR_TYPES
         async_add_entities(
             (
                 ForecaSensor(coordinator, subentry_id, description)
-                for description in SENSOR_TYPES
+                for description in descriptions
             ),
             config_subentry_id=subentry_id,
         )
