@@ -69,7 +69,7 @@ async def test_documented_request_budget(
     mock_config_entry: MockConfigEntry,
     mock_foreca_client: MagicMock,
 ) -> None:
-    """Test one update costs the four requests the documentation promises.
+    """Test one update costs the five requests the documentation promises.
 
     The docs page quotes this number against the Freemium daily limit, so a new
     call added to the coordinator has to be a deliberate change here too.
@@ -87,9 +87,9 @@ async def test_documented_request_budget(
         "current": 1,
         "forecast_daily": 1,
         "forecast_hourly": 1,
-        "observation_latest": 1,
+        "observation_latest": 2,
     }
-    assert sum(awaited.values()) == 4
+    assert sum(awaited.values()) == 5
 
 
 @pytest.mark.usefixtures("mock_foreca_client")

@@ -30,6 +30,7 @@ class OptionalRequest(StrEnum):
     """A request whose failure leaves only the sensors that read it unavailable."""
 
     OBSERVATION = "observation"
+    PRECIPITATION_TOTALS = "precipitation totals"
 
 
 _CLOUDINESS_CONDITIONS = {

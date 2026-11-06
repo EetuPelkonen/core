@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import override
 
-from pyforeca import Observation, ObservedHourlyPrecipitation
+from pyforeca import Observation, ObservedHourlyPrecipitation, ObservedPrecipitation
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -137,6 +137,45 @@ def _last_hour_precipitation_type(observation: Observation) -> str | None:
     if hour is None or not hour.accum or hour.prectype not in PRECIPITATION_TYPES:
         return None
     return hour.prectype
+
+
+def _station_totals[T](
+    value_fn: Callable[[Observation], T],
+) -> Callable[[ForecaWeatherData], T | None]:
+    """Read a value from the nearest station's own precipitation totals."""
+
+    def read(data: ForecaWeatherData) -> T | None:
+        if data.precipitation_totals is None:
+            return None
+        return value_fn(data.precipitation_totals)
+
+    return read
+
+
+def _station_total(
+    observation: Observation, hours: int
+) -> ObservedPrecipitation | None:
+    """Return the station's own total over a number of hours, if it reports one."""
+    return next(
+        (total for total in observation.precipitation if total.period == f"{hours}h"),
+        None,
+    )
+
+
+def _total_start(observation: Observation, hours: int) -> datetime | None:
+    """Return when the station's total over the hours began, unless it is stale."""
+    total = _station_total(observation, hours)
+    if total is None:
+        return None
+    return _window_start(observation, total.endtime, timedelta(hours=hours))
+
+
+def _total(observation: Observation, hours: int) -> float | None:
+    """Return the station's own total over the hours, unless it is stale."""
+    total = _station_total(observation, hours)
+    if total is None or _total_start(observation, hours) is None:
+        return None
+    return total.accum
 
 
 SENSOR_TYPES: tuple[ForecaSensorEntityDescription, ...] = (
@@ -307,6 +346,53 @@ SENSOR_TYPES: tuple[ForecaSensorEntityDescription, ...] = (
         entity_registry_enabled_default=False,
         request=OptionalRequest.OBSERVATION,
         value_fn=_observed(_last_hour_precipitation_type),
+    ),
+    ForecaSensorEntityDescription(
+        key="observed_precipitation_3h",
+        translation_key="observed_precipitation_3h",
+        device_class=SensorDeviceClass.PRECIPITATION,
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        state_class=SensorStateClass.TOTAL,
+        suggested_display_precision=1,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.PRECIPITATION_TOTALS,
+        value_fn=_station_totals(lambda obs: _total(obs, 3)),
+        last_reset_fn=_station_totals(lambda obs: _total_start(obs, 3)),
+    ),
+    ForecaSensorEntityDescription(
+        key="observed_precipitation_6h",
+        translation_key="observed_precipitation_6h",
+        device_class=SensorDeviceClass.PRECIPITATION,
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        state_class=SensorStateClass.TOTAL,
+        suggested_display_precision=1,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.PRECIPITATION_TOTALS,
+        value_fn=_station_totals(lambda obs: _total(obs, 6)),
+        last_reset_fn=_station_totals(lambda obs: _total_start(obs, 6)),
+    ),
+    ForecaSensorEntityDescription(
+        key="observed_precipitation_12h",
+        translation_key="observed_precipitation_12h",
+        device_class=SensorDeviceClass.PRECIPITATION,
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        state_class=SensorStateClass.TOTAL,
+        suggested_display_precision=1,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.PRECIPITATION_TOTALS,
+        value_fn=_station_totals(lambda obs: _total(obs, 12)),
+        last_reset_fn=_station_totals(lambda obs: _total_start(obs, 12)),
+    ),
+    ForecaSensorEntityDescription(
+        key="observed_precipitation_24h",
+        translation_key="observed_precipitation_24h",
+        device_class=SensorDeviceClass.PRECIPITATION,
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        state_class=SensorStateClass.TOTAL,
+        suggested_display_precision=1,
+        request=OptionalRequest.PRECIPITATION_TOTALS,
+        value_fn=_station_totals(lambda obs: _total(obs, 24)),
+        last_reset_fn=_station_totals(lambda obs: _total_start(obs, 24)),
     ),
 )
 
