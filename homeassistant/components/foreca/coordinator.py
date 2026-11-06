@@ -93,7 +93,11 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
                 self.location, periods=HOURLY_PERIODS, dataset="full", rounding=0
             )
             daily = await self.client.forecast_daily(
-                self.location, periods=DAILY_PERIODS, dataset="full", rounding=0
+                self.location,
+                periods=DAILY_PERIODS,
+                dataset="full",
+                rounding=0,
+                ensemble=True,
             )
             observation = await self._async_optional(
                 OptionalRequest.OBSERVATION,

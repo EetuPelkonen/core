@@ -1,5 +1,6 @@
 """Weather platform for the Foreca integration."""
 
+from collections.abc import Callable
 from typing import cast, override
 
 from pyforeca import DailyForecast, FifteenMinuteForecast, ForecaError, HourlyForecast
@@ -281,6 +282,13 @@ class ForecaWeather(
             "sunrise": _from_epoch(day.sunrise_epoch),
             "sunset": _from_epoch(day.sunset_epoch),
             "confidence": _CONFIDENCE.get(day.confidence or ""),
+            "temperature_ensemble": _percentiles(
+                day.max_temp_ensemble, self._temperature
+            ),
+            "templow_ensemble": _percentiles(day.min_temp_ensemble, self._temperature),
+            "precipitation_ensemble": _percentiles(
+                day.precip_accum_ensemble, self._precipitation
+            ),
         }
 
     def _temperature(self, value: float | None) -> float | None:
@@ -301,6 +309,17 @@ class ForecaWeather(
         return round(
             UNIT_CONVERSIONS[ATTR_WEATHER_VISIBILITY_UNIT](
                 value, UnitOfLength.METERS, self._visibility_unit
+            ),
+            _ROUNDING_PRECISION,
+        )
+
+    def _precipitation(self, value: float | None) -> float | None:
+        """Convert an amount in mm to the entity's precipitation unit."""
+        if value is None:
+            return None
+        return round(
+            UNIT_CONVERSIONS[ATTR_WEATHER_PRECIPITATION_UNIT](
+                value, UnitOfPrecipitationDepth.MILLIMETERS, self._precipitation_unit
             ),
             _ROUNDING_PRECISION,
         )
@@ -381,6 +400,16 @@ class ForecaWeather(
         return UNIT_CONVERSIONS[ATTR_WEATHER_PRECIPITATION_UNIT](
             rate, UnitOfPrecipitationDepth.MILLIMETERS, self._precipitation_unit
         )
+
+
+def _percentiles(
+    values: dict[str, float | None] | None,
+    convert: Callable[[float | None], float | None],
+) -> dict[str, JsonValueType] | None:
+    """Convert each ensemble percentile, keeping the API's p000-style keys."""
+    if values is None:
+        return None
+    return {key: convert(value) for key, value in values.items()}
 
 
 def _from_epoch(epoch: int | None) -> str | None:
