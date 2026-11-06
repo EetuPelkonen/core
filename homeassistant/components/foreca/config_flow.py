@@ -130,6 +130,7 @@ class ForecaConfigFlow(ConfigFlow, domain=DOMAIN):
         """Check a new API key against the first location, then store it."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            self._async_abort_entries_match({CONF_API_KEY: user_input[CONF_API_KEY]})
             locations = entry.get_subentries_of_type(SUBENTRY_TYPE_LOCATION)
             if locations:
                 latitude = locations[0].data[CONF_LATITUDE]
@@ -141,9 +142,15 @@ class ForecaConfigFlow(ConfigFlow, domain=DOMAIN):
                 self.hass, user_input[CONF_API_KEY], latitude, longitude
             )
             if not errors:
-                return self.async_update_reload_and_abort(
-                    entry, data_updates={CONF_API_KEY: user_input[CONF_API_KEY]}
-                )
+                if (
+                    not self.hass.config_entries.async_update_entry(
+                        entry,
+                        data={**entry.data, CONF_API_KEY: user_input[CONF_API_KEY]},
+                    )
+                    or not entry.update_listeners
+                ):
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                return self.async_update_and_abort(entry)
 
         return self.async_show_form(
             step_id=step_id, data_schema=API_KEY_SCHEMA, errors=errors

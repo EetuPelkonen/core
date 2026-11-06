@@ -9,6 +9,7 @@ from homeassistant.helpers import service
 from .const import DOMAIN
 
 SERVICE_GET_15_MINUTE_FORECAST = "get_15_minute_forecast"
+SERVICE_GET_3_HOUR_FORECAST = "get_3_hour_forecast"
 SERVICE_GET_FORECASTS_EXTRA = "get_forecasts_extra"
 SERVICE_GET_MINUTE_FORECAST = "get_minute_forecast"
 
@@ -41,5 +42,14 @@ def async_setup_services(hass: HomeAssistant) -> None:
         entity_domain=WEATHER_DOMAIN,
         schema=None,
         func="async_get_minute_forecast",
+        supports_response=SupportsResponse.ONLY,
+    )
+    service.async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        SERVICE_GET_3_HOUR_FORECAST,
+        entity_domain=WEATHER_DOMAIN,
+        schema=None,
+        func="async_get_3_hour_forecast",
         supports_response=SupportsResponse.ONLY,
     )

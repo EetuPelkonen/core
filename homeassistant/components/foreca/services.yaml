@@ -22,3 +22,9 @@ get_minute_forecast:
     entity:
       domain: weather
       integration: foreca
+
+get_3_hour_forecast:
+  target:
+    entity:
+      domain: weather
+      integration: foreca

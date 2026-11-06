@@ -36,6 +36,7 @@ PARALLEL_UPDATES = 0
 _CONFIDENCE = {"g": "good", "y": "normal", "o": "low"}
 _ROUNDING_PRECISION = 2
 _FIFTEEN_MINUTE_PERIODS = 12
+_THREE_HOUR_PERIODS = 112
 
 
 async def async_setup_entry(
@@ -254,8 +255,11 @@ class ForecaWeather(
         """Return an hour's values that a Home Assistant forecast cannot hold."""
         if (timestamp := dt_util.parse_datetime(hour.time or "")) is None:
             return None
+        return {"datetime": timestamp.isoformat(), **self._hourly_extra_values(hour)}
+
+    def _hourly_extra_values(self, hour: HourlyForecast) -> dict[str, JsonValueType]:
+        """Return the values of an hourly step that a forecast cannot hold."""
         return {
-            "datetime": timestamp.isoformat(),
             "precipitation_type": hour.precip_type,
             "snow_accumulation": self._snow(hour.snow_accum),
             "snow_depth": self._snow(hour.snow_depth),
@@ -289,6 +293,37 @@ class ForecaWeather(
             "precipitation_ensemble": _percentiles(
                 day.precip_accum_ensemble, self._precipitation
             ),
+        }
+
+    async def async_get_3_hour_forecast(self) -> ServiceResponse:
+        """Return the forecast in 3-hour steps for the next 14 days."""
+        try:
+            steps = await self.coordinator.client.forecast_3hourly(
+                self.coordinator.location,
+                periods=_THREE_HOUR_PERIODS,
+                dataset="full",
+                rounding=0,
+            )
+        except ForecaError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="three_hour_forecast_error",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        dated = [
+            (step, forecast)
+            for step in steps
+            if (forecast := _hourly_to_forecast(step)) is not None
+        ]
+        converted = self._convert_forecast([forecast for _, forecast in dated])
+        return {
+            "forecast": [
+                {
+                    **cast(dict[str, JsonValueType], entry),
+                    **self._hourly_extra_values(step),
+                }
+                for (step, _), entry in zip(dated, converted, strict=True)
+            ]
         }
 
     def _temperature(self, value: float | None) -> float | None:
@@ -361,7 +396,9 @@ class ForecaWeather(
                 {
                     **cast(dict[str, JsonValueType], entry),
                     "precipitation_rate": self._convert_precipitation(step.precip_rate),
-                    "snow_rate": self._snow(step.snow_rate),
+                    "snow_rate": self._convert_precipitation(
+                        step.snow_rate, UnitOfPrecipitationDepth.CENTIMETERS
+                    ),
                     "precipitation_type": step.precip_type,
                     "thunderstorm_probability": step.thunder_prob,
                     "visibility": self._visibility(step.visibility),
@@ -383,6 +420,7 @@ class ForecaWeather(
                 translation_placeholders={"error": str(err)},
             ) from err
         return {
+            "resolution": minutes.resolution,
             "forecast": [
                 {
                     "datetime": timestamp.isoformat(),
@@ -390,15 +428,22 @@ class ForecaWeather(
                 }
                 for minute in minutes
                 if (timestamp := dt_util.parse_datetime(minute.time or "")) is not None
-            ]
+            ],
         }
 
-    def _convert_precipitation(self, rate: float | None) -> float | None:
-        """Convert a rate in mm/h to the entity's precipitation unit per hour."""
+    def _convert_precipitation(
+        self,
+        rate: float | None,
+        unit: UnitOfPrecipitationDepth = UnitOfPrecipitationDepth.MILLIMETERS,
+    ) -> float | None:
+        """Convert a rate per hour to the entity's precipitation unit per hour.
+
+        Rates stay unrounded: in inches, light rain would round to zero.
+        """
         if rate is None:
             return None
         return UNIT_CONVERSIONS[ATTR_WEATHER_PRECIPITATION_UNIT](
-            rate, UnitOfPrecipitationDepth.MILLIMETERS, self._precipitation_unit
+            rate, unit, self._precipitation_unit
         )
 
 

@@ -12,10 +12,11 @@ from pyforeca import (
     HourlyForecast,
     Location,
     MinutelyForecast,
+    MinutelyForecastList,
     Observation,
 )
 import pytest
-from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry, load_json_object_fixture
 
 from homeassistant.components.foreca.const import DOMAIN, SUBENTRY_TYPE_LOCATION
 from homeassistant.config_entries import ConfigSubentryData
@@ -125,12 +126,15 @@ DAILY = [
     ),
 ]
 
-MINUTELY = [
-    MinutelyForecast(time="2026-09-01T17:01+03:00", precip_rate=0.0),
-    MinutelyForecast(time="2026-09-01T17:02+03:00", precip_rate=0.4),
-    MinutelyForecast(time="2026-09-01T17:03+03:00", precip_rate=1.27),
-    MinutelyForecast(time="2026-09-01T17:04+03:00", precip_rate=None),
-]
+MINUTELY = MinutelyForecastList(
+    [
+        MinutelyForecast(time="2026-09-01T17:01+03:00", precip_rate=0.0),
+        MinutelyForecast(time="2026-09-01T17:02+03:00", precip_rate=0.4),
+        MinutelyForecast(time="2026-09-01T17:03+03:00", precip_rate=1.27),
+        MinutelyForecast(time="2026-09-01T17:04+03:00", precip_rate=None),
+    ],
+    resolution=1,
+)
 
 FIFTEEN_MINUTE = [
     FifteenMinuteForecast.from_api(
@@ -265,6 +269,14 @@ def mock_foreca_client(
         client.air_quality_hourly = AsyncMock(return_value=[AIR_QUALITY])
         client.forecast_minutely = AsyncMock(return_value=MINUTELY)
         client.forecast_15minutely = AsyncMock(return_value=FIFTEEN_MINUTE)
+        client.forecast_3hourly = AsyncMock(
+            return_value=[
+                HourlyForecast.from_api(step)
+                for step in load_json_object_fixture("forecast_3hourly.json", DOMAIN)[
+                    "forecast"
+                ]
+            ]
+        )
         yield client
 
 
