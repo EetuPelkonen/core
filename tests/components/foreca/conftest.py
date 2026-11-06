@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 
 from pyforeca import (
+    AirQualityDailyForecast,
     AirQualityForecast,
     CurrentWeather,
     DailyForecast,
@@ -192,6 +193,21 @@ FIFTEEN_MINUTE = [
     ),
 ]
 
+AIR_QUALITY_DAILY = AirQualityDailyForecast.from_api(
+    {
+        "date": "2026-11-06",
+        "AQI": 26,
+        "pollutant": "Ozone",
+        "pollutantPhrase": "Ozone",
+        "AQI_CO": 2,
+        "AQI_NO2": 6,
+        "AQI_GO3": 26,
+        "AQI_SO2": 0,
+        "AQI_PM2P5": 8,
+        "AQI_PM10": 5,
+    }
+)
+
 LOCATION = Location(
     id=100658225,
     name="Helsinki",
@@ -272,6 +288,7 @@ def mock_foreca_client(
             ),
         )
         client.air_quality_hourly = AsyncMock(return_value=[AIR_QUALITY])
+        client.air_quality_daily = AsyncMock(return_value=[AIR_QUALITY_DAILY])
         client.forecast_minutely = AsyncMock(return_value=MINUTELY)
         client.forecast_15minutely = AsyncMock(return_value=FIFTEEN_MINUTE)
         client.forecast_3hourly = AsyncMock(

@@ -1,11 +1,19 @@
 """Weather platform for the Foreca integration."""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import date as dt_date, datetime
 from typing import cast, override
 from zoneinfo import ZoneInfo
 
-from pyforeca import DailyForecast, FifteenMinuteForecast, ForecaError, HourlyForecast
+from pyforeca import (
+    AirQualityDailyForecast,
+    AirQualityForecast,
+    DailyForecast,
+    FifteenMinuteForecast,
+    ForecaError,
+    ForecaProductUnavailableError,
+    HourlyForecast,
+)
 
 from homeassistant.components.weather import (
     ATTR_WEATHER_PRECIPITATION_UNIT,
@@ -29,7 +37,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 from homeassistant.util.json import JsonValueType
 
-from .const import DOMAIN, symbol_to_condition
+from .const import DOMAIN, POLLUTANTS, symbol_to_condition
 from .coordinator import ForecaConfigEntry, ForecaUpdateCoordinator
 from .entity import ForecaEntity
 
@@ -39,6 +47,8 @@ _CONFIDENCE = {"g": "good", "y": "normal", "o": "low"}
 _ROUNDING_PRECISION = 2
 _FIFTEEN_MINUTE_PERIODS = 12
 _THREE_HOUR_PERIODS = 112
+_AIR_QUALITY_HOURLY_PERIODS = 85
+_AIR_QUALITY_DAILY_PERIODS = 4
 
 
 async def async_setup_entry(
@@ -120,6 +130,38 @@ def _fifteen_minute_to_forecast(step: FifteenMinuteForecast) -> Forecast | None:
         cloud_coverage=step.cloudiness,
         uv_index=step.uv_index,
     )
+
+
+def _air_quality_values(
+    air_quality: AirQualityForecast | AirQualityDailyForecast,
+) -> dict[str, JsonValueType]:
+    """Return the indexes of an air quality forecast step."""
+    return {
+        "aqi": air_quality.aqi,
+        "dominant_pollutant": POLLUTANTS.get(air_quality.pollutant or ""),
+        "aqi_co": air_quality.aqi_co,
+        "aqi_no2": air_quality.aqi_no2,
+        "aqi_o3": air_quality.aqi_o3,
+        "aqi_so2": air_quality.aqi_so2,
+        "aqi_pm10": air_quality.aqi_pm10,
+        "aqi_pm25": air_quality.aqi_pm2p5,
+    }
+
+
+async def _fetch_air_quality[T](request: Awaitable[T]) -> T:
+    """Await an air quality request, raising translated errors."""
+    try:
+        return await request
+    except ForecaProductUnavailableError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="air_quality_not_on_plan"
+        ) from err
+    except ForecaError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="air_quality_forecast_error",
+            translation_placeholders={"error": str(err)},
+        ) from err
 
 
 class ForecaWeather(
@@ -409,6 +451,36 @@ class ForecaWeather(
                     "visibility": self._visibility(step.visibility),
                 }
                 for (step, _), entry in zip(dated, converted, strict=True)
+            ]
+        }
+
+    async def async_get_air_quality_forecast(self, type: str) -> ServiceResponse:
+        """Return the hourly or daily air quality forecast."""
+        client = self.coordinator.client
+        location = self.coordinator.location
+        if type == "hourly":
+            hours = await _fetch_air_quality(
+                client.air_quality_hourly(location, periods=_AIR_QUALITY_HOURLY_PERIODS)
+            )
+            return {
+                "forecast": [
+                    {"datetime": timestamp.isoformat(), **_air_quality_values(hour)}
+                    for hour in hours
+                    if (timestamp := dt_util.parse_datetime(hour.time or ""))
+                    is not None
+                ]
+            }
+        days = await _fetch_air_quality(
+            client.air_quality_daily(location, periods=_AIR_QUALITY_DAILY_PERIODS)
+        )
+        return {
+            "forecast": [
+                {
+                    "datetime": dt_util.start_of_local_day(date).isoformat(),
+                    **_air_quality_values(day),
+                }
+                for day in days
+                if (date := dt_util.parse_date(day.date or "")) is not None
             ]
         }
 

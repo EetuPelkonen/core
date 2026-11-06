@@ -46,20 +46,11 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
-from .const import OptionalRequest, symbol_to_condition
+from .const import POLLUTANTS, OptionalRequest, symbol_to_condition
 from .coordinator import ForecaConfigEntry, ForecaUpdateCoordinator, ForecaWeatherData
 from .entity import ForecaEntity
 
 PARALLEL_UPDATES = 0
-
-POLLUTANTS = {
-    "Carbon monoxide": "carbon_monoxide",
-    "Nitrogen dioxide": "nitrogen_dioxide",
-    "Ozone": "ozone",
-    "Particulate matter <10um": "pm10",
-    "Particulate matter <2.5um": "pm25",
-    "Sulphur dioxide": "sulphur_dioxide",
-}
 
 
 @dataclass(frozen=True, kw_only=True)

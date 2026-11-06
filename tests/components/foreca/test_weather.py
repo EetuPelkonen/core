@@ -5,9 +5,12 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from pyforeca import (
+    AirQualityDailyForecast,
+    AirQualityForecast,
     DailyForecast,
     FifteenMinuteForecast,
     ForecaError,
+    ForecaProductUnavailableError,
     HourlyForecast,
     Location,
     MinutelyForecast,
@@ -21,6 +24,7 @@ from homeassistant.components.foreca.const import DOMAIN
 from homeassistant.components.foreca.services import (
     SERVICE_GET_3_HOUR_FORECAST,
     SERVICE_GET_15_MINUTE_FORECAST,
+    SERVICE_GET_AIR_QUALITY_FORECAST,
     SERVICE_GET_FORECASTS_EXTRA,
     SERVICE_GET_MINUTE_FORECAST,
 )
@@ -237,10 +241,11 @@ async def test_live_forecast(
 
 
 @pytest.mark.parametrize(
-    ("service", "mocked_method", "undated", "expected"),
+    ("service", "service_data", "mocked_method", "undated", "expected"),
     [
         pytest.param(
             SERVICE_GET_MINUTE_FORECAST,
+            {},
             "forecast_minutely",
             MinutelyForecastList(
                 [MinutelyForecast(time=None, precip_rate=0.4)], resolution=60
@@ -250,6 +255,7 @@ async def test_live_forecast(
         ),
         pytest.param(
             SERVICE_GET_15_MINUTE_FORECAST,
+            {},
             "forecast_15minutely",
             [FifteenMinuteForecast(time=None, temperature=3.0)],
             {"forecast": []},
@@ -257,10 +263,27 @@ async def test_live_forecast(
         ),
         pytest.param(
             SERVICE_GET_3_HOUR_FORECAST,
+            {},
             "forecast_3hourly",
             [HourlyForecast(time=None, temperature=3.0)],
             {"forecast": []},
             id="3_hour",
+        ),
+        pytest.param(
+            SERVICE_GET_AIR_QUALITY_FORECAST,
+            {"type": "hourly"},
+            "air_quality_hourly",
+            [AirQualityForecast(time=None)],
+            {"forecast": []},
+            id="air_quality_hourly",
+        ),
+        pytest.param(
+            SERVICE_GET_AIR_QUALITY_FORECAST,
+            {"type": "daily"},
+            "air_quality_daily",
+            [AirQualityDailyForecast(date=None)],
+            {"forecast": []},
+            id="air_quality_daily",
         ),
     ],
 )
@@ -269,6 +292,7 @@ async def test_live_forecast_without_a_time_is_dropped(
     mock_config_entry: MockConfigEntry,
     mock_foreca_client: MagicMock,
     service: str,
+    service_data: dict[str, str],
     mocked_method: str,
     undated: MinutelyForecastList | list[FifteenMinuteForecast] | list[HourlyForecast],
     expected: dict[str, Any],
@@ -281,7 +305,7 @@ async def test_live_forecast_without_a_time_is_dropped(
     response = await hass.services.async_call(
         DOMAIN,
         service,
-        {ATTR_ENTITY_ID: ENTITY_ID},
+        {ATTR_ENTITY_ID: ENTITY_ID, **service_data},
         blocking=True,
         return_response=True,
     )
@@ -410,3 +434,59 @@ async def test_moon_times_without_a_time_zone(
         None,
         None,
     )
+
+
+@pytest.mark.usefixtures("mock_foreca_client")
+@pytest.mark.parametrize("forecast_type", ["daily", "hourly"])
+async def test_air_quality_forecast(
+    hass: HomeAssistant,
+    snapshot: SnapshotAssertion,
+    mock_config_entry: MockConfigEntry,
+    forecast_type: str,
+) -> None:
+    """Test the hourly and daily air quality forecasts."""
+    with patch("homeassistant.components.foreca.PLATFORMS", [Platform.WEATHER]):
+        await init_integration(hass, mock_config_entry)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_GET_AIR_QUALITY_FORECAST,
+        {ATTR_ENTITY_ID: ENTITY_ID, "type": forecast_type},
+        blocking=True,
+        return_response=True,
+    )
+    assert response == snapshot
+
+
+@pytest.mark.parametrize(
+    ("error", "translation_key"),
+    [
+        pytest.param(
+            ForecaProductUnavailableError,
+            "air_quality_not_on_plan",
+            id="not_on_plan",
+        ),
+        pytest.param(ForecaError("timeout"), "air_quality_forecast_error", id="error"),
+    ],
+)
+async def test_air_quality_forecast_error(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_foreca_client: MagicMock,
+    error: Exception | type[Exception],
+    translation_key: str,
+) -> None:
+    """Test a failed air quality request raises a translated error."""
+    with patch("homeassistant.components.foreca.PLATFORMS", [Platform.WEATHER]):
+        await init_integration(hass, mock_config_entry)
+    mock_foreca_client.air_quality_daily.side_effect = error
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_GET_AIR_QUALITY_FORECAST,
+            {ATTR_ENTITY_ID: ENTITY_ID, "type": "daily"},
+            blocking=True,
+            return_response=True,
+        )
+    assert exc_info.value.translation_key == translation_key
