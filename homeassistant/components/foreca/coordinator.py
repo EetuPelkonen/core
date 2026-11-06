@@ -96,7 +96,9 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             )
             observation = await self._async_optional(
                 OptionalRequest.OBSERVATION,
-                self.client.observation_latest(self.location),
+                self.client.observation_latest(
+                    self.location, precipitation="hourly", rounding=0
+                ),
             )
             air_quality = await self._async_optional(
                 OptionalRequest.AIR_QUALITY, self._async_air_quality()
