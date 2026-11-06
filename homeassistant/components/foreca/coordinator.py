@@ -93,7 +93,9 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             )
             observation = await self._async_optional(
                 OptionalRequest.OBSERVATION,
-                self.client.observation_latest(self.location),
+                self.client.observation_latest(
+                    self.location, precipitation="hourly", rounding=0
+                ),
             )
         except (ForecaAuthError, ForecaProductUnavailableError) as err:
             raise ConfigEntryAuthFailed(
