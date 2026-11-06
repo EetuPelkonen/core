@@ -6,6 +6,7 @@ import logging
 from typing import override
 
 from pyforeca import (
+    AirQualityForecast,
     CurrentWeather,
     DailyForecast,
     ForecaApiClient,
@@ -45,6 +46,7 @@ class ForecaWeatherData:
     hourly: list[HourlyForecast]
     daily: list[DailyForecast]
     observation: Observation | None
+    air_quality: AirQualityForecast | None
     failed_requests: frozenset[OptionalRequest]
 
 
@@ -78,6 +80,7 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             manufacturer="Foreca",
             entry_type=DeviceEntryType.SERVICE,
         )
+        self.air_quality_on_plan = True
         self._failed_requests: set[OptionalRequest] = set()
 
     @override
@@ -95,6 +98,9 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
                 OptionalRequest.OBSERVATION,
                 self.client.observation_latest(self.location),
             )
+            air_quality = await self._async_optional(
+                OptionalRequest.AIR_QUALITY, self._async_air_quality()
+            )
         except (ForecaAuthError, ForecaProductUnavailableError) as err:
             raise ConfigEntryAuthFailed(
                 f"The Foreca API rejected the API key: {err}"
@@ -109,6 +115,7 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             hourly=hourly,
             daily=daily,
             observation=observation,
+            air_quality=air_quality,
             failed_requests=frozenset(self._failed_requests),
         )
 
@@ -134,3 +141,19 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             self._failed_requests.remove(request)
             _LOGGER.info("Fetching %s %s data recovered", self.name, request)
         return result
+
+    async def _async_air_quality(self) -> AirQualityForecast | None:
+        """Return the air quality for the hour in progress.
+
+        The first step of the hourly air quality forecast is the current hour.
+        Once the API reports that the plan lacks air quality, stop asking.
+        """
+        if not self.air_quality_on_plan:
+            return None
+        try:
+            hours = await self.client.air_quality_hourly(self.location, periods=1)
+        except ForecaProductUnavailableError:
+            _LOGGER.debug("The plan of this API key does not include air quality")
+            self.air_quality_on_plan = False
+            return None
+        return hours[0] if hours else None

@@ -30,6 +30,7 @@ class OptionalRequest(StrEnum):
     """A request whose failure leaves only the sensors that read it unavailable."""
 
     OBSERVATION = "observation"
+    AIR_QUALITY = "air quality"
 
 
 _CLOUDINESS_CONDITIONS = {
