@@ -31,6 +31,7 @@ class OptionalRequest(StrEnum):
 
     OBSERVATION = "observation"
     AIR_QUALITY = "air quality"
+    PRECIPITATION_TOTALS = "precipitation totals"
 
 
 _CLOUDINESS_CONDITIONS = {

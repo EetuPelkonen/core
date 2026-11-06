@@ -1,7 +1,8 @@
 """Common fixtures for the Foreca tests."""
 
 from collections.abc import Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 
 from pyforeca import (
     AirQualityForecast,
@@ -122,8 +123,28 @@ def mock_setup_entry() -> Generator[AsyncMock]:
 
 
 @pytest.fixture
-def mock_foreca_client() -> Generator[MagicMock]:
+def precipitation_totals() -> Observation | None:
+    """Return the observation that a request for station totals gets."""
+    return load_observation("observation_precipitation_totals_helsinki.json")
+
+
+@pytest.fixture
+def mock_foreca_client(
+    precipitation_totals: Observation | None,
+) -> Generator[MagicMock]:
     """Mock the Foreca API client."""
+
+    async def observation_latest(
+        location: str,
+        *,
+        precipitation: str | None = None,
+        rounding: int | None = None,
+    ) -> Any:
+        """Answer a request for station totals; leave the others to return_value."""
+        if precipitation == "latest":
+            return precipitation_totals
+        return DEFAULT
+
     with (
         patch(
             "homeassistant.components.foreca.ForecaApiClient",
@@ -140,9 +161,10 @@ def mock_foreca_client() -> Generator[MagicMock]:
         client.forecast_hourly = AsyncMock(return_value=HOURLY)
         client.forecast_daily = AsyncMock(return_value=DAILY)
         client.observation_latest = AsyncMock(
+            side_effect=observation_latest,
             return_value=load_observation(
                 "observation_hourly_precipitation_helsinki.json"
-            )
+            ),
         )
         client.air_quality_hourly = AsyncMock(return_value=[AIR_QUALITY])
         yield client

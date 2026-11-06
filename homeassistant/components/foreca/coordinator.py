@@ -47,6 +47,7 @@ class ForecaWeatherData:
     daily: list[DailyForecast]
     observation: Observation | None
     air_quality: AirQualityForecast | None
+    precipitation_totals: Observation | None
     failed_requests: frozenset[OptionalRequest]
 
 
@@ -103,6 +104,12 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             air_quality = await self._async_optional(
                 OptionalRequest.AIR_QUALITY, self._async_air_quality()
             )
+            precipitation_totals = await self._async_optional(
+                OptionalRequest.PRECIPITATION_TOTALS,
+                self.client.observation_latest(
+                    self.location, precipitation="latest", rounding=0
+                ),
+            )
         except (ForecaAuthError, ForecaProductUnavailableError) as err:
             raise ConfigEntryAuthFailed(
                 f"The Foreca API rejected the API key: {err}"
@@ -118,6 +125,7 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             daily=daily,
             observation=observation,
             air_quality=air_quality,
+            precipitation_totals=precipitation_totals,
             failed_requests=frozenset(self._failed_requests),
         )
 
