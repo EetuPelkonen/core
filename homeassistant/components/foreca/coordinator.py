@@ -11,6 +11,7 @@ from pyforeca import (
     ForecaApiClient,
     ForecaAuthError,
     ForecaError,
+    ForecaProductUnavailableError,
     HourlyForecast,
     Observation,
     format_location,
@@ -94,7 +95,7 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
                 OptionalRequest.OBSERVATION,
                 self.client.observation_latest(self.location),
             )
-        except ForecaAuthError as err:
+        except (ForecaAuthError, ForecaProductUnavailableError) as err:
             raise ConfigEntryAuthFailed(
                 f"The Foreca API rejected the API key: {err}"
             ) from err
