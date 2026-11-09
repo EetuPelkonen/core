@@ -16,6 +16,7 @@ import pytest
 from pytest_homeassistant.common import (
     MockConfigEntry,
     async_fire_time_changed,
+    async_load_json_object_fixture,
     load_json_object_fixture,
     snapshot_platform,
 )
@@ -45,6 +46,7 @@ AIR_QUALITY_INDEX = "sensor.helsinki_air_quality_index"
 HOURLY_PRECIPITATION = "sensor.helsinki_observed_hourly_precipitation"
 OBSERVED_TEMPERATURE = "sensor.helsinki_observed_temperature"
 PRECIPITATION_TYPE = "sensor.helsinki_observed_precipitation_type"
+PRECIPITATION_3_HOURS = "sensor.helsinki_observed_3_hour_precipitation"
 PRECIPITATION_6_HOURS = "sensor.helsinki_observed_6_hour_precipitation"
 PRECIPITATION_12_HOURS = "sensor.helsinki_observed_12_hour_precipitation"
 PRECIPITATION_24_HOURS = "sensor.helsinki_observed_24_hour_precipitation"
@@ -59,10 +61,10 @@ def _unavailable(hass: HomeAssistant) -> set[str]:
     }
 
 
-def _london_totals_at(time: str) -> Observation:
-    """Return the totals of the London station as if observed at another time."""
+def _totals_at(city: str, time: str) -> Observation:
+    """Return the totals of a city's station as if observed at another time."""
     station = load_json_object_fixture(
-        "observation_precipitation_totals_london.json", DOMAIN
+        f"observation_precipitation_totals_{city}.json", DOMAIN
     )["observations"][0]
     return Observation.from_api(station | {"time": time})
 
@@ -104,6 +106,7 @@ async def test_sensors_disabled_by_default(
         "sensor.helsinki_pm10_index",
         "sensor.helsinki_pm2_5_index",
         "sensor.helsinki_sulphur_dioxide_index",
+        PRECIPITATION_3_HOURS,
         PRECIPITATION_6_HOURS,
         PRECIPITATION_12_HOURS,
         "sensor.helsinki_observation_time",
@@ -144,7 +147,7 @@ async def test_sensors_without_values(
         await init_integration(hass, mock_config_entry)
 
     states = hass.states.async_all(Platform.SENSOR)
-    assert len(states) == 28
+    assert len(states) == 29
     assert {state.state for state in states} == {STATE_UNKNOWN}
 
 
@@ -294,7 +297,7 @@ async def test_air_quality_not_on_plan(
     assert mock_config_entry.state is ConfigEntryState.LOADED
     assert not hass.config_entries.flow.async_progress()
     assert hass.states.get(AIR_QUALITY_INDEX) is None
-    assert len(hass.states.async_all(Platform.SENSOR)) == 20
+    assert len(hass.states.async_all(Platform.SENSOR)) == 21
     assert hass.states.get(OBSERVED_TEMPERATURE).state == "5.6"
 
     freezer.tick(UPDATE_INTERVAL)
@@ -423,8 +426,10 @@ async def test_stale_hourly_precipitation(
     The Tromso response stands in for a station that skipped its latest hours,
     with those hours left out of its series.
     """
-    station = load_json_object_fixture(
-        "observation_hourly_precipitation_tromso.json", DOMAIN
+    station = (
+        await async_load_json_object_fixture(
+            hass, "observation_hourly_precipitation_tromso.json", DOMAIN
+        )
     )["observations"][0]
     hours = station["precip1h"]
     station["precip1h"] = hours[: len(hours) - skipped_hours]
@@ -446,15 +451,17 @@ async def test_stale_hourly_precipitation(
         pytest.param(
             load_observation("observation_precipitation_totals_london.json"),
             {
+                PRECIPITATION_3_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_6_HOURS: ("0.8", "2026-11-06T06:00:00+00:00"),
                 PRECIPITATION_12_HOURS: ("1.2", "2026-11-05T21:00:00+00:00"),
                 PRECIPITATION_24_HOURS: ("0.4", "2026-11-05T06:00:00+00:00"),
             },
-            id="all_periods",
+            id="6_12_and_24_hours",
         ),
         pytest.param(
             load_observation("observation_precipitation_totals_helsinki.json"),
             {
+                PRECIPITATION_3_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_6_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_12_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_24_HOURS: ("0", "2026-11-05T08:00:00+02:00"),
@@ -462,8 +469,29 @@ async def test_stale_hourly_precipitation(
             id="periods_not_reported",
         ),
         pytest.param(
-            _london_totals_at("2026-11-06T19:00:00Z"),
+            load_observation("observation_precipitation_totals_berlin.json"),
             {
+                PRECIPITATION_3_HOURS: ("0", "2026-11-09T07:00:00+01:00"),
+                PRECIPITATION_6_HOURS: (STATE_UNKNOWN, None),
+                PRECIPITATION_12_HOURS: ("0", "2026-11-08T19:00:00+01:00"),
+                PRECIPITATION_24_HOURS: ("0", "2026-11-08T07:00:00+01:00"),
+            },
+            id="3_12_and_24_hours",
+        ),
+        pytest.param(
+            _totals_at("berlin", "2026-11-09T14:20:00+01:00"),
+            {
+                PRECIPITATION_3_HOURS: (STATE_UNKNOWN, None),
+                PRECIPITATION_6_HOURS: (STATE_UNKNOWN, None),
+                PRECIPITATION_12_HOURS: ("0", "2026-11-08T19:00:00+01:00"),
+                PRECIPITATION_24_HOURS: ("0", "2026-11-08T07:00:00+01:00"),
+            },
+            id="3_hours_stale",
+        ),
+        pytest.param(
+            _totals_at("london", "2026-11-06T19:00:00Z"),
+            {
+                PRECIPITATION_3_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_6_HOURS: ("0.8", "2026-11-06T06:00:00+00:00"),
                 PRECIPITATION_12_HOURS: ("1.2", "2026-11-05T21:00:00+00:00"),
                 PRECIPITATION_24_HOURS: ("0.4", "2026-11-05T06:00:00+00:00"),
@@ -471,8 +499,9 @@ async def test_stale_hourly_precipitation(
             id="next_6_hours_an_hour_late",
         ),
         pytest.param(
-            _london_totals_at("2026-11-06T19:20:00Z"),
+            _totals_at("london", "2026-11-06T19:20:00Z"),
             {
+                PRECIPITATION_3_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_6_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_12_HOURS: ("1.2", "2026-11-05T21:00:00+00:00"),
                 PRECIPITATION_24_HOURS: ("0.4", "2026-11-05T06:00:00+00:00"),
@@ -480,8 +509,9 @@ async def test_stale_hourly_precipitation(
             id="6_hours_stale",
         ),
         pytest.param(
-            _london_totals_at("2026-11-07T07:20:00Z"),
+            _totals_at("london", "2026-11-07T07:20:00Z"),
             {
+                PRECIPITATION_3_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_6_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_12_HOURS: (STATE_UNKNOWN, None),
                 PRECIPITATION_24_HOURS: (STATE_UNKNOWN, None),

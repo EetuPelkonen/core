@@ -382,6 +382,18 @@ SENSOR_TYPES: tuple[ForecaSensorEntityDescription, ...] = (
         value_fn=_observed(_last_hour_precipitation_type),
     ),
     ForecaSensorEntityDescription(
+        key="observed_precipitation_3h",
+        translation_key="observed_precipitation_3h",
+        device_class=SensorDeviceClass.PRECIPITATION,
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        state_class=SensorStateClass.TOTAL,
+        suggested_display_precision=1,
+        entity_registry_enabled_default=False,
+        request=OptionalRequest.PRECIPITATION_TOTALS,
+        value_fn=_station_totals(lambda obs: _total(obs, 3)),
+        last_reset_fn=_station_totals(lambda obs: _total_start(obs, 3)),
+    ),
+    ForecaSensorEntityDescription(
         key="observed_precipitation_6h",
         translation_key="observed_precipitation_6h",
         device_class=SensorDeviceClass.PRECIPITATION,
