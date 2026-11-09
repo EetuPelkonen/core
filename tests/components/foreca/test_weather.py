@@ -3,7 +3,7 @@
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-from pyforeca import DailyForecast, HourlyForecast
+from pyforeca import DailyForecast, HourlyForecast, Location
 import pytest
 from pytest_homeassistant.common import MockConfigEntry, snapshot_platform
 from syrupy.assertion import SnapshotAssertion
@@ -181,3 +181,57 @@ async def test_forecasts_extra_without_a_time_is_dropped(
         return_response=True,
     )
     assert response == {ENTITY_ID: {"forecast": []}}
+
+
+@pytest.mark.usefixtures("mock_foreca_client")
+async def test_moon_times_are_at_the_location(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test moonrise and moonset are read in the location's time zone.
+
+    The API gives them as times of day where the location is, which differs
+    from where Home Assistant is.
+    """
+    await hass.config.async_set_time_zone("America/Los_Angeles")
+    with patch("homeassistant.components.foreca.PLATFORMS", [Platform.WEATHER]):
+        await init_integration(hass, mock_config_entry)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_GET_FORECASTS_EXTRA,
+        {ATTR_ENTITY_ID: ENTITY_ID, "type": "daily"},
+        blocking=True,
+        return_response=True,
+    )
+    assert [
+        (day["moon_phase"], day["moonrise"], day["moonset"])
+        for day in response[ENTITY_ID]["forecast"]
+    ] == [
+        (128, "2026-09-02T16:51:03+00:00", "2026-09-02T03:43:27+00:00"),
+        (140, None, "2026-09-03T04:58:12+00:00"),
+    ]
+
+
+async def test_moon_times_without_a_time_zone(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_foreca_client: MagicMock,
+) -> None:
+    """Test moonrise and moonset are left out when the location has no time zone."""
+    mock_foreca_client.location_info.return_value = Location(timezone=None)
+    with patch("homeassistant.components.foreca.PLATFORMS", [Platform.WEATHER]):
+        await init_integration(hass, mock_config_entry)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_GET_FORECASTS_EXTRA,
+        {ATTR_ENTITY_ID: ENTITY_ID, "type": "daily"},
+        blocking=True,
+        return_response=True,
+    )
+    first = response[ENTITY_ID]["forecast"][0]
+    assert (first["moon_phase"], first["moonrise"], first["moonset"]) == (
+        128,
+        None,
+        None,
+    )

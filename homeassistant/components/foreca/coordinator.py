@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import logging
 from typing import override
+from zoneinfo import ZoneInfo
 
 from pyforeca import (
     CurrentWeather,
@@ -20,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import DAILY_PERIODS, DOMAIN, HOURLY_PERIODS, UPDATE_INTERVAL
 
@@ -67,6 +69,27 @@ class ForecaUpdateCoordinator(DataUpdateCoordinator[ForecaWeatherData]):
             manufacturer="Foreca",
             entry_type=DeviceEntryType.SERVICE,
         )
+        self.time_zone: ZoneInfo | None = None
+
+    @override
+    async def _async_setup(self) -> None:
+        """Look up the time zone of the location.
+
+        The daily forecast gives moonrise and moonset as times of day at the
+        location, which mean nothing without its time zone.
+        """
+        try:
+            location = await self.client.location_info(self.location)
+        except ForecaAuthError as err:
+            raise ConfigEntryAuthFailed(
+                f"The Foreca API rejected the API key: {err}"
+            ) from err
+        except ForecaError as err:
+            raise UpdateFailed(
+                f"Error communicating with the Foreca API: {err}"
+            ) from err
+        if location.timezone:
+            self.time_zone = await dt_util.async_get_time_zone(location.timezone)
 
     @override
     async def _async_update_data(self) -> ForecaWeatherData:

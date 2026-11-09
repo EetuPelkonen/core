@@ -1,6 +1,8 @@
 """Weather platform for the Foreca integration."""
 
+from datetime import date as dt_date, datetime
 from typing import override
+from zoneinfo import ZoneInfo
 
 from pyforeca import DailyForecast, HourlyForecast
 
@@ -256,6 +258,9 @@ class ForecaWeather(
             "sunrise": _from_epoch(day.sunrise_epoch),
             "sunset": _from_epoch(day.sunset_epoch),
             "confidence": _CONFIDENCE.get(day.confidence or ""),
+            "moon_phase": day.moon_phase,
+            "moonrise": _at_location(date, day.moonrise, self.coordinator.time_zone),
+            "moonset": _at_location(date, day.moonset, self.coordinator.time_zone),
         }
 
     def _temperature(self, value: float | None) -> float | None:
@@ -297,3 +302,12 @@ def _from_epoch(epoch: int | None) -> str | None:
     if epoch is None:
         return None
     return dt_util.utc_from_timestamp(epoch).isoformat()
+
+
+def _at_location(
+    date: dt_date, time: str | None, time_zone: ZoneInfo | None
+) -> str | None:
+    """Return a time of day at the location as an ISO 8601 timestamp in UTC."""
+    if time_zone is None or (clock := dt_util.parse_time(time or "")) is None:
+        return None
+    return dt_util.as_utc(datetime.combine(date, clock, time_zone)).isoformat()

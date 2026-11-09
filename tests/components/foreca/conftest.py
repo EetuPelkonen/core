@@ -78,6 +78,9 @@ DAILY = [
         sunrise_epoch=1788318000,
         sunset_epoch=1788368400,
         confidence="g",
+        moon_phase=128,
+        moonrise="19:51:03",
+        moonset="06:43:27",
     ),
     DailyForecast(
         date="2026-09-03",
@@ -87,6 +90,8 @@ DAILY = [
         precip_accum=0.4,
         max_wind_speed=5.0,
         wind_dir=180,
+        moon_phase=140,
+        moonset="07:58:12",
     ),
 ]
 
