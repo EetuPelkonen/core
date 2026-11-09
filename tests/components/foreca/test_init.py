@@ -2,15 +2,20 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+from freezegun.api import FrozenDateTimeFactory
 from pyforeca import (
     ForecaAuthError,
     ForecaConnectionError,
     ForecaProductUnavailableError,
 )
 import pytest
-from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
-from homeassistant.components.foreca.const import DOMAIN, SUBENTRY_TYPE_LOCATION
+from homeassistant.components.foreca.const import (
+    DOMAIN,
+    SUBENTRY_TYPE_LOCATION,
+    UPDATE_INTERVAL,
+)
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState, ConfigSubentry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.core import HomeAssistant
@@ -32,13 +37,15 @@ async def test_load_unload_entry(
     assert mock_config_entry.state is ConfigEntryState.NOT_LOADED
 
 
+@pytest.mark.parametrize("method", ["current", "location_info"])
 async def test_setup_retries_on_connection_error(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_foreca_client: MagicMock,
+    method: str,
 ) -> None:
     """Test the entry is retried when the API is unreachable."""
-    mock_foreca_client.current.side_effect = ForecaConnectionError
+    getattr(mock_foreca_client, method).side_effect = ForecaConnectionError
     await init_integration(hass, mock_config_entry)
     assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 
@@ -48,6 +55,7 @@ async def test_setup_retries_on_connection_error(
     [
         ("current", ForecaAuthError),
         ("current", ForecaProductUnavailableError),
+        ("location_info", ForecaAuthError),
         ("observation_latest", ForecaAuthError),
     ],
 )
@@ -71,13 +79,21 @@ async def test_documented_request_budget(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_foreca_client: MagicMock,
+    freezer: FrozenDateTimeFactory,
 ) -> None:
-    """Test one update costs the six requests the documentation promises.
+    """Test each update costs the six requests the documentation promises.
 
     The docs page quotes this number against the Freemium daily limit, so a new
-    call added to the coordinator has to be a deliberate change here too.
+    call added to the coordinator has to be a deliberate change here too. The
+    location's time zone costs one more request, once at setup.
     """
     await init_integration(hass, mock_config_entry)
+    assert mock_foreca_client.location_info.await_count == 1
+    mock_foreca_client.reset_mock()
+
+    freezer.tick(UPDATE_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
 
     awaited = {
         name: attr.await_count
